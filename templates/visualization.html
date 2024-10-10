@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Meta tags for responsiveness and character encoding -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Points vs Salary Visualization</title>
+
+  <!-- Include Plotly.js for data visualization -->
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+  <!-- Inline CSS styles -->
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    #plot {
+      width: 90%;
+      max-width: 1200px;
+      height: 600px;
+      margin: 0 auto;
+    }
+    #optimal-lineup {
+      width: 90%;
+      max-width: 800px;
+      margin: 20px auto;
+      text-align: left;
+    }
+    form {
+      margin: 20px auto;
+      max-width: 800px;
+      text-align: left;
+    }
+    input[type="text"], select {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      box-sizing: border-box;
+    }
+    button {
+      padding: 10px 20px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    label {
+      font-weight: bold;
+    }
+    .lineup-details {
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Page title and description -->
+  <h1>Points per Game vs Salary</h1>
+  <p>
+    Visualization of DraftKings player salaries compared to their average points per game.
+  </p>
+
+  <!-- Model selection dropdown -->
+  <form id="model-select-form">
+    <label for="model-select">Select Regression Model:</label>
+    <select id="model-select">
+      <option value="linear">Linear Regression</option>
+      <option value="polynomial">Polynomial Regression</option>
+      <option value="decision_tree">Decision Tree Regression</option>
+      <option value="random_forest">Random Forest Regression</option>
+    </select>
+  </form>
+
+  <!-- Div for the Plotly graph -->
+  <div id="plot"></div>
+
+  <!-- Form to input the DraftKings contest URL -->
+  <form id="contest-url-form">
+    <label for="contest-url">Enter DraftKings Contest URL:</label>
+    <input
+      type="text"
+      id="contest-url"
+      name="contest-url"
+      placeholder="e.g. https://www.draftkings.com/draft/contest/168156968"
+    />
+    <button type="button" onclick="submitContestUrl()">
+      Submit Contest URL
+    </button>
+  </form>
+
+  <!-- Form to exclude players from the lineup -->
+  <form id="exclude-form">
+    <label for="exclude-players">Enter names of players to exclude (comma separated):</label>
+    <input
+      type="text"
+      id="exclude-players"
+      name="exclude-players"
+      placeholder="e.g. Player One, Player Two"
+    />
+    <button type="button" onclick="dropPlayers()">Drop Players</button>
+  </form>
+
+  <!-- Optimization method selection -->
+  <form id="optimization-method-form">
+    <label for="optimization-method">Select Optimization Method:</label>
+    <select id="optimization-method">
+      <option value="standard">Standard Optimization (AvgPointsPerGame)</option>
+      <option value="regression">Regression Model Predictions</option>
+      <option value="vorp">Value Over Replacement Player (VORP)</option>
+    </select>
+  </form>
+
+  <!-- Button to generate the optimal lineup -->
+  <form id="generate-lineup-form">
+    <button type="button" onclick="generateOptimalLineup()">
+      Generate Optimal Lineup
+    </button>
+  </form>
+
+  <!-- Div to display the optimal lineups -->
+  <div id="optimal-lineup">
+    <h2>Optimal Lineups</h2>
+    <ul id="lineup-list"></ul>
+  </div>
+
+  <!-- JavaScript code -->
+  <script>
+    // Clear excludePlayers from sessionStorage when the page loads
+    window.onload = function() {
+      sessionStorage.removeItem('excludePlayers');
+      document.getElementById("exclude-players").value = "";
+      loadAndPlotData();  // Load data on page load
+    };
+
+    // Function to load JSON data and plot the graph
+    function loadAndPlotData(modelType = 'linear') {
+      // Add a timestamp to prevent caching issues
+      const jsonDataUrl = `/static/points_vs_salary_data_${modelType}.json?v=${new Date().getTime()}`;
+
+      fetch(jsonDataUrl)
+        .then((response) => response.json())
+        .then((data) => {
+          // Scatter trace for player data
+          const scatterTrace = {
+            x: data.Salary,
+            y: data.AvgPointsPerGame,
+            mode: "markers",
+            type: "scatter",
+            text: data.Name, // Hover text with player names
+            marker: { size: 8, color: "blue", opacity: 0.6 },
+            name: "Player Data",
+          };
+
+          // Regression line trace
+          const regressionTrace = {
+            x: data.Salary,
+            y: data.RegressionLine,
+            mode: "markers",
+            type: "scatter",
+            line: { color: "red", width: 2 },
+            name: "Regression Model",
+          };
+
+          // Layout settings for the plot
+          const layout = {
+            title: `Points per Game vs Salary (${modelType.replace('_', ' ').toUpperCase()})`,
+            xaxis: { title: "Salary ($)" },
+            yaxis: { title: "Points per Game" },
+            hovermode: "closest",
+            autosize: true,
+          };
+
+          // Render the plot in the 'plot' div
+          Plotly.newPlot("plot", [scatterTrace, regressionTrace], layout);
+        })
+        .catch((error) => {
+          console.error("Error loading JSON data:", error);
+          alert("Error loading visualization data. Please ensure data is available.");
+        });
+    }
+
+    // Event listener for model selection
+    document.getElementById('model-select').addEventListener('change', function() {
+      const selectedModel = this.value;
+      loadAndPlotData(selectedModel);
+    });
+
+    // Function to handle contest URL submission
+    function submitContestUrl() {
+      const contestUrl = document.getElementById("contest-url").value;
+
+      // Validate the contest URL before sending
+      if (!contestUrl) {
+        alert("Please enter a valid contest URL.");
+        return;
+      }
+
+      fetch(`/api/process_contest_link`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ contest_url: contestUrl }),
+      })
+        .then((response) => response.json())
+        .then((data) => {
+          if (data.error) {
+            alert("Error: " + data.error);
+          } else {
+            alert("Contest details successfully parsed and data fetched.");
+
+            // Clear excludePlayers after fetching new contest data
+            sessionStorage.removeItem("excludePlayers");
+            document.getElementById("exclude-players").value = "";
+
+            // Reload the visualization with new data
+            const selectedModel = document.getElementById('model-select').value;
+            loadAndPlotData(selectedModel);
+          }
+        })
+        .catch((error) => {
+          console.error("Error submitting contest URL:", error);
+          alert("An error occurred while submitting the contest URL.");
+        });
+    }
+
+    // Function to store excluded players in sessionStorage
+    function dropPlayers() {
+      const excludePlayers = document.getElementById("exclude-players").value;
+      sessionStorage.setItem("excludePlayers", excludePlayers);
+      alert("Players to be excluded have been noted. Now generate the lineup.");
+    }
+
+    // Function to generate the optimal lineup
+    function generateOptimalLineup() {
+      const excludePlayers = sessionStorage.getItem("excludePlayers") || "";
+      const optimizationMethod = document.getElementById('optimization-method').value;
+      const modelType = document.getElementById('model-select').value;
+
+      fetch(
+        `/api/optimal_lineups?exclude_players=${encodeURIComponent(
+          excludePlayers
+        )}&optimization_method=${encodeURIComponent(
+          optimizationMethod
+        )}&model_type=${encodeURIComponent(modelType)}`
+      )
+        .then((response) => response.json())
+        .then((lineupsData) => {
+          const lineupList = document.getElementById("lineup-list");
+          lineupList.innerHTML = "";
+
+          // Check if lineups are returned successfully
+          if (Array.isArray(lineupsData.lineups)) {
+            lineupsData.lineups.forEach((lineupObj, index) => {
+              const lineup = lineupObj.lineup;
+              const lineupItem = document.createElement("li");
+              lineupItem.innerHTML = `
+                <div class="lineup-details">
+                  <strong>Lineup ${index + 1}:</strong><br>
+                  ${lineup
+                    .map((player) => `${player.Name} (${player.Position})`)
+                    .join(", ")}<br>
+                  <strong>Total Projected Points:</strong> ${lineupObj.total_points.toFixed(2)}<br>
+                  <strong>Total Salary:</strong> $${lineupObj.total_salary}<br>
+                  <strong>Solver Status:</strong> ${lineupObj.solver_status}<br>
+                </div>
+              `;
+              lineupList.appendChild(lineupItem);
+            });
+          } else if (lineupsData.error) {
+            alert("Error: " + lineupsData.error);
+          } else {
+            alert("An unexpected error occurred while generating lineups.");
+          }
+        })
+        .catch((error) => {
+          console.error("Error loading lineup data:", error);
+          alert("An error occurred while generating the lineup.");
+        });
+    }
+  </script>
+</body>
+</html>
